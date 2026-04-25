@@ -42,8 +42,8 @@ python scripts/download_orderbook_stream.py BTCUSDT --start-date 2025-05-01 --en
 # Несколько derivatives символов
 python scripts/download_orderbook_stream.py --symbols BTCUSDT,ETHUSDT,SOLUSDT --market linear --start-date 2025-05-01 --end-date 2025-05-31 --workers 3
 
-# Много символов из файла (до 30)
-python scripts/download_orderbook_stream.py --symbols-file pairs.txt --market linear --start-date 2025-05-01 --end-date 2025-05-31 --workers 3
+# Много символов из файла (до 30, глобальная очередь по всем symbol/date задачам)
+python scripts/download_orderbook_stream.py --symbols-file pairs.txt --market linear --start-date 2025-05-01 --end-date 2025-05-31 --workers 5
 
 # Inverse perpetuals
 python scripts/download_orderbook_stream.py BTCUSD --market inverse --start-date 2025-05-01 --end-date 2025-05-31 --workers 3
@@ -53,15 +53,26 @@ python scripts/download_orderbook_stream.py BTCUSDT --market spot --start-date 2
 
 # С порогом свободного места (остановка если < 100 ГБ)
 python scripts/download_orderbook_stream.py BTCUSDT --start-date 2025-05-01 --end-date 2025-12-31 --min-disk 100
+
+# Быстрые backfill: ниже ZSTD уровень и крупнее сетевые чанки
+python scripts/download_orderbook_stream.py --symbols-file pairs.txt --market linear --start-date 2025-05-01 --end-date 2025-05-31 --workers 5 --compression-level 3 --chunk-size-mb 4
 ```
 
 **Флаги:**
-- `--workers N` — параллельных загрузок (рекомендуется: 3-5, больше может вызвать таймауты)
+- `--workers N` — глобальные параллельные загрузки по всем symbol/date задачам (рекомендуется: 3-5, больше может вызвать таймауты)
 - `--stagger N` — случайная задержка 0-N секунд перед стартом каждого воркера
 - `--min-disk N` — остановка если места на диске меньше N ГБ
 - `--market linear|inverse|spot` — архив рынка для скачивания (`linear` по умолчанию для USDT perpetuals)
 - `--depth N` — глубина стакана (`500` для derivatives, `200` для spot по умолчанию)
 - `--symbols-file PATH` — чтение до 30 символов из текстового файла, по одному в строке или через запятую/пробел; комментарии `#` игнорируются
+- `--batch-size N` — размер Parquet row group (`50000` по умолчанию)
+- `--compression-level N` — уровень ZSTD для Parquet (`6` по умолчанию; `3` быстрее для backfill, выше — меньше файлы)
+- `--chunk-size-mb N` — размер HTTP чанка в МБ (`1` по умолчанию)
+- `--max-retries N` — число попыток на одну symbol/date задачу (`3` по умолчанию)
+- `--allow-parse-errors` — продолжать запись при ошибках отдельных JSON строк (по умолчанию fail-fast)
+- `--no-verify-existing` — пропускать существующие Parquet без проверки manifest и row count
+
+Streaming downloader пишет Parquet атомарно и создаёт `.manifest.json` рядом с каждым файлом. При resume существующие файлы пропускаются только если manifest, размер файла, row count, symbol, market, date, depth и URL совпадают.
 
 ### Order Book (Legacy — только ZIP)
 Скачивание ZIP архивов без конвертации.
