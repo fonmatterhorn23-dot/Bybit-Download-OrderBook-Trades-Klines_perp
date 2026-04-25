@@ -42,6 +42,9 @@ python scripts/download_orderbook_stream.py BTCUSDT --start-date 2025-05-01 --en
 # Несколько derivatives символов
 python scripts/download_orderbook_stream.py --symbols BTCUSDT,ETHUSDT,SOLUSDT --market linear --start-date 2025-05-01 --end-date 2025-05-31 --workers 3
 
+# Много символов из файла (до 30)
+python scripts/download_orderbook_stream.py --symbols-file pairs.txt --market linear --start-date 2025-05-01 --end-date 2025-05-31 --workers 3
+
 # Inverse perpetuals
 python scripts/download_orderbook_stream.py BTCUSD --market inverse --start-date 2025-05-01 --end-date 2025-05-31 --workers 3
 
@@ -58,12 +61,14 @@ python scripts/download_orderbook_stream.py BTCUSDT --start-date 2025-05-01 --en
 - `--min-disk N` — остановка если места на диске меньше N ГБ
 - `--market linear|inverse|spot` — архив рынка для скачивания (`linear` по умолчанию для USDT perpetuals)
 - `--depth N` — глубина стакана (`500` для derivatives, `200` для spot по умолчанию)
+- `--symbols-file PATH` — чтение до 30 символов из текстового файла, по одному в строке или через запятую/пробел; комментарии `#` игнорируются
 
 ### Order Book (Legacy — только ZIP)
 Скачивание ZIP архивов без конвертации.
 
 ```bash
 python scripts/download_orderbook.py BTCUSDT --market linear --start-date 2025-05-01 --end-date 2025-05-31
+python scripts/download_orderbook.py --symbols-file pairs.txt --market linear --start-date 2025-05-01 --end-date 2025-05-31
 ```
 
 ### Конвертация ZIP в Parquet
