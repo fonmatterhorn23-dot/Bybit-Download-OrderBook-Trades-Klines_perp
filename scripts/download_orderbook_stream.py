@@ -28,6 +28,7 @@ DEFAULT_DEPTH_BY_MARKET = {
     "linear": 500,
     "inverse": 500,
 }
+MAX_SYMBOLS = 30
 
 
 def get_disk_free_gb(path: Path) -> float:
@@ -74,6 +75,63 @@ def log(msg: str) -> None:
     """
     ts = datetime.now().strftime("%H:%M:%S")
     print(f"[{ts}] {msg}", flush=True)
+
+
+def parse_symbols_file(symbols_file: str) -> list[str]:
+    """
+    Читаем список торговых пар из файла.
+
+    params:
+        symbols_file: Путь к файлу
+    return:
+        Список символов
+    """
+    symbols = []
+    text = Path(symbols_file).read_text(encoding="utf-8")
+
+    for raw_line in text.splitlines():
+        line = raw_line.split("#", 1)[0].strip()
+        if not line:
+            continue
+        symbols.extend(part.strip().upper() for part in line.replace(",", " ").split() if part.strip())
+
+    return symbols
+
+
+def resolve_symbols(symbol: str | None, symbols_arg: str | None, symbols_file: str | None) -> list[str]:
+    """
+    Собираем список символов из positional arg, --symbols и --symbols-file.
+
+    params:
+        symbol: Одна торговая пара
+        symbols_arg: Список пар через запятую
+        symbols_file: Файл со списком пар
+    return:
+        Список уникальных символов
+    """
+    candidates = []
+
+    if symbols_file:
+        candidates.extend(parse_symbols_file(symbols_file))
+    if symbols_arg:
+        candidates.extend(part.strip().upper() for part in symbols_arg.split(",") if part.strip())
+    if symbol:
+        candidates.append(symbol.upper())
+    if not candidates:
+        candidates.append("BTCUSDT")
+
+    symbols = []
+    seen = set()
+    for candidate in candidates:
+        normalized = candidate.strip().upper()
+        if normalized and normalized not in seen:
+            symbols.append(normalized)
+            seen.add(normalized)
+
+    if len(symbols) > MAX_SYMBOLS:
+        raise ValueError(f"Too many symbols: {len(symbols)}. Maximum supported is {MAX_SYMBOLS}.")
+
+    return symbols
 
 
 def build_orderbook_url(market: str, symbol: str, date: datetime, depth: int) -> tuple[str, str]:
@@ -384,6 +442,7 @@ def main() -> None:
   
   # Несколько символов с 5 воркерами
   python download_orderbook_stream.py --symbols BTCUSDT,ETHUSDT --market linear --start-date 2025-05-01 --end-date 2025-05-31 --workers 5
+  python download_orderbook_stream.py --symbols-file pairs.txt --market linear --start-date 2025-05-01 --end-date 2025-05-31 --workers 5
 
   # Inverse perpetuals
   python download_orderbook_stream.py BTCUSD --market inverse --start-date 2025-05-01 --end-date 2025-05-05
@@ -404,6 +463,8 @@ def main() -> None:
                         help="Торговая пара (можно использовать --symbols)")
     parser.add_argument("--symbols", type=str, default=None,
                         help="Список пар через запятую: BTCUSDT,ETHUSDT,SOLUSDT")
+    parser.add_argument("--symbols-file", type=str, default=None,
+                        help="Файл со списком пар (по одной в строке или через запятую, максимум 30)")
     parser.add_argument("--market", type=str, choices=["linear", "inverse", "spot"],
                         default="linear",
                         help="Рынок Bybit: linear/inverse (derivatives) или spot")
@@ -426,13 +487,10 @@ def main() -> None:
     
     args = parser.parse_args()
     
-    # Определяем список символов
-    if args.symbols:
-        symbols = [s.strip().upper() for s in args.symbols.split(',')]
-    elif args.symbol:
-        symbols = [args.symbol.upper()]
-    else:
-        symbols = ["BTCUSDT"]
+    try:
+        symbols = resolve_symbols(args.symbol, args.symbols, args.symbols_file)
+    except (OSError, ValueError) as exc:
+        parser.error(str(exc))
     
     depth = args.depth or DEFAULT_DEPTH_BY_MARKET[args.market]
     output_dir = Path(args.output_dir)
