@@ -145,7 +145,7 @@ def main() -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Примеры:
-  python convert_to_parquet.py --input data/raw/orderbook/BTCUSDT --output data/parquet/BTCUSDT
+  python convert_to_parquet.py --input data/raw/orderbook/linear/BTCUSDT --output data/parquet/orderbook/linear/BTCUSDT
         """
     )
     parser.add_argument("--input", type=str, required=True,
