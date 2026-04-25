@@ -23,6 +23,13 @@ from typing import Tuple, Dict, Any, List
 import polars as pl
 
 
+DEFAULT_DEPTH_BY_MARKET = {
+    "spot": 200,
+    "linear": 500,
+    "inverse": 500,
+}
+
+
 def get_disk_free_gb(path: Path) -> float:
     """
     Получаем свободное место на диске в ГБ.
@@ -67,6 +74,24 @@ def log(msg: str) -> None:
     """
     ts = datetime.now().strftime("%H:%M:%S")
     print(f"[{ts}] {msg}", flush=True)
+
+
+def build_orderbook_url(market: str, symbol: str, date: datetime, depth: int) -> tuple[str, str]:
+    """
+    Собираем URL исторического архива Order Book.
+
+    params:
+        market: spot, linear или inverse
+        symbol: Торговая пара
+        date: Дата архива
+        depth: Глубина стакана
+    return:
+        Кортеж (url, filename)
+    """
+    date_str = date.strftime("%Y-%m-%d")
+    filename = f"{date_str}_{symbol}_ob{depth}.data.zip"
+    url = f"https://quote-saver.bycsi.com/orderbook/{market}/{symbol}/{filename}"
+    return url, filename
 
 
 def download_and_convert(url: str, output_path: Path, 
@@ -225,7 +250,7 @@ def daterange(start: datetime, end: datetime):
         current += timedelta(days=1)
 
 
-def download_symbol_stream(symbol: str, start: datetime, end: datetime,
+def download_symbol_stream(symbol: str, market: str, depth: int, start: datetime, end: datetime,
                            output_dir: Path, workers: int, 
                            min_disk_gb: float, stagger_delay: float,
                            dry_run: bool) -> dict:
@@ -234,6 +259,8 @@ def download_symbol_stream(symbol: str, start: datetime, end: datetime,
 
     params:
         symbol: Торговая пара
+        market: Рынок Bybit: spot, linear или inverse
+        depth: Глубина стакана
         start: Начальная дата
         end: Конечная дата
         output_dir: Директория для сохранения Parquet
@@ -244,7 +271,7 @@ def download_symbol_stream(symbol: str, start: datetime, end: datetime,
     return:
         Статистика {success, failed, skipped, total_mb}
     """
-    symbol_dir = output_dir / symbol
+    symbol_dir = output_dir / market / symbol
     symbol_dir.mkdir(parents=True, exist_ok=True)
     
     tasks = []
@@ -252,10 +279,9 @@ def download_symbol_stream(symbol: str, start: datetime, end: datetime,
     
     for date in daterange(start, end):
         date_str = date.strftime("%Y-%m-%d")
-        zip_filename = f"{date_str}_{symbol}_ob200.data.zip"
-        url = f"https://quote-saver.bycsi.com/orderbook/spot/{symbol}/{zip_filename}"
+        url, _ = build_orderbook_url(market, symbol, date, depth)
         
-        parquet_filename = f"{date_str}_{symbol}_ob200.parquet"
+        parquet_filename = f"{date_str}_{symbol}_ob{depth}.parquet"
         output_path = symbol_dir / parquet_filename
         
         if dry_run:
@@ -349,15 +375,21 @@ def main() -> None:
         None
     """
     parser = argparse.ArgumentParser(
-        description="Скачиваем Order Book и сразу конвертируем в Parquet",
+        description="Скачиваем Order Book из исторических архивов и сразу конвертируем в Parquet",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Примеры:
-  # Скачать и конвертировать BTCUSDT за 5 дней
+  # Скачать и конвертировать BTCUSDT USDT perpetuals за 5 дней
   python download_orderbook_stream.py BTCUSDT --start-date 2025-05-01 --end-date 2025-05-05
   
   # Несколько символов с 5 воркерами
-  python download_orderbook_stream.py --symbols BTCUSDT,ETHUSDT --start-date 2025-05-01 --end-date 2025-05-31 --workers 5
+  python download_orderbook_stream.py --symbols BTCUSDT,ETHUSDT --market linear --start-date 2025-05-01 --end-date 2025-05-31 --workers 5
+
+  # Inverse perpetuals
+  python download_orderbook_stream.py BTCUSD --market inverse --start-date 2025-05-01 --end-date 2025-05-05
+
+  # Spot
+  python download_orderbook_stream.py BTCUSDT --market spot --start-date 2025-05-01 --end-date 2025-05-05
   
   # С минимальным порогом места на диске 100 ГБ
   python download_orderbook_stream.py BTCUSDT --start-date 2025-05-01 --end-date 2025-12-31 --min-disk 100
@@ -372,6 +404,11 @@ def main() -> None:
                         help="Торговая пара (можно использовать --symbols)")
     parser.add_argument("--symbols", type=str, default=None,
                         help="Список пар через запятую: BTCUSDT,ETHUSDT,SOLUSDT")
+    parser.add_argument("--market", type=str, choices=["linear", "inverse", "spot"],
+                        default="linear",
+                        help="Рынок Bybit: linear/inverse (derivatives) или spot")
+    parser.add_argument("--depth", type=int, default=None,
+                        help="Глубина стакана. По умолчанию: 500 для derivatives, 200 для spot")
     parser.add_argument("--start-date", type=str, required=True,
                         help="Начальная дата (YYYY-MM-DD)")
     parser.add_argument("--end-date", type=str, required=True,
@@ -397,6 +434,7 @@ def main() -> None:
     else:
         symbols = ["BTCUSDT"]
     
+    depth = args.depth or DEFAULT_DEPTH_BY_MARKET[args.market]
     output_dir = Path(args.output_dir)
     start = datetime.strptime(args.start_date, "%Y-%m-%d")
     end = datetime.strptime(args.end_date, "%Y-%m-%d")
@@ -406,6 +444,8 @@ def main() -> None:
     print("Bybit Order Book Stream Downloader")
     print("=" * 60)
     print(f"Symbols:      {', '.join(symbols)}")
+    print(f"Market:       {args.market}")
+    print(f"Depth:        ob{depth}")
     print(f"Period:       {args.start_date} to {args.end_date} ({total_days} days)")
     print(f"Output:       {output_dir}")
     print(f"Workers:      {args.workers}")
@@ -421,7 +461,7 @@ def main() -> None:
         print("-" * 40)
         
         stats = download_symbol_stream(
-            symbol, start, end, output_dir, 
+            symbol, args.market, depth, start, end, output_dir,
             args.workers, args.min_disk, args.stagger, args.dry_run
         )
         

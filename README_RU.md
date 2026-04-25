@@ -4,7 +4,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Bybit](https://img.shields.io/badge/Exchange-Bybit-orange.svg)](https://www.bybit.com/)
 
-CLI-инструменты для скачивания исторических **Spot** данных с Bybit. API ключи не нужны.
+CLI-инструменты для скачивания исторических данных **Derivatives** и Spot с Bybit. API ключи не нужны.
 
 [Русская версия](README_RU.md) | [English](README.md)
 
@@ -12,7 +12,7 @@ CLI-инструменты для скачивания исторических 
 
 ## 🚀 Возможности
 
-- **📊 Order Book** — 200 уровней, обновление 200мс
+- **📊 Order Book** — Derivatives (linear/inverse, 500 уровней) и Spot (200 уровней)
 - **💹 Trades** — Тиковые данные сделок
 - **📈 Klines** — Spot и Futures через API v5
 - **🗜️ Parquet Streaming** — Скачивание и конвертация за один шаг, экономия ~22% места
@@ -36,11 +36,17 @@ pip install -r requirements.txt
 Скачивание и конвертация в Parquet за один шаг. Экономит ~22% места.
 
 ```bash
-# Один символ (рекомендуется: 3 воркера, 10с задержка)
+# Один derivatives символ (USDT perpetuals, рекомендуется: 3 воркера, 10с задержка)
 python scripts/download_orderbook_stream.py BTCUSDT --start-date 2025-05-01 --end-date 2025-05-31 --workers 3 --stagger 10
 
-# Несколько символов
-python scripts/download_orderbook_stream.py --symbols BTCUSDT,ETHUSDT,SOLUSDT --start-date 2025-05-01 --end-date 2025-05-31 --workers 3
+# Несколько derivatives символов
+python scripts/download_orderbook_stream.py --symbols BTCUSDT,ETHUSDT,SOLUSDT --market linear --start-date 2025-05-01 --end-date 2025-05-31 --workers 3
+
+# Inverse perpetuals
+python scripts/download_orderbook_stream.py BTCUSD --market inverse --start-date 2025-05-01 --end-date 2025-05-31 --workers 3
+
+# Spot market
+python scripts/download_orderbook_stream.py BTCUSDT --market spot --start-date 2025-05-01 --end-date 2025-05-31 --workers 3
 
 # С порогом свободного места (остановка если < 100 ГБ)
 python scripts/download_orderbook_stream.py BTCUSDT --start-date 2025-05-01 --end-date 2025-12-31 --min-disk 100
@@ -50,19 +56,21 @@ python scripts/download_orderbook_stream.py BTCUSDT --start-date 2025-05-01 --en
 - `--workers N` — параллельных загрузок (рекомендуется: 3-5, больше может вызвать таймауты)
 - `--stagger N` — случайная задержка 0-N секунд перед стартом каждого воркера
 - `--min-disk N` — остановка если места на диске меньше N ГБ
+- `--market linear|inverse|spot` — архив рынка для скачивания (`linear` по умолчанию для USDT perpetuals)
+- `--depth N` — глубина стакана (`500` для derivatives, `200` для spot по умолчанию)
 
 ### Order Book (Legacy — только ZIP)
 Скачивание ZIP архивов без конвертации.
 
 ```bash
-python scripts/download_orderbook.py BTCUSDT --start-date 2025-05-01 --end-date 2025-05-31
+python scripts/download_orderbook.py BTCUSDT --market linear --start-date 2025-05-01 --end-date 2025-05-31
 ```
 
 ### Конвертация ZIP в Parquet
 Конвертация ранее скачанных ZIP архивов.
 
 ```bash
-python scripts/convert_to_parquet.py --input data/raw/orderbook/BTCUSDT --output data/parquet/BTCUSDT
+python scripts/convert_to_parquet.py --input data/raw/orderbook/linear/BTCUSDT --output data/parquet/orderbook/linear/BTCUSDT
 ```
 
 ### Скачать Trades
@@ -86,10 +94,12 @@ python scripts/download_klines.py BTCUSDT --source linear --start-date 2025-01-0
 ```
 data/
 ├── raw/
-│   ├── orderbook/BTCUSDT/      # ZIP архивы (legacy)
+│   ├── orderbook/linear/BTCUSDT/  # Derivatives ZIP архивы (legacy)
+│   ├── orderbook/inverse/BTCUSD/  # Inverse derivatives ZIP архивы (legacy)
+│   ├── orderbook/spot/BTCUSDT/    # Spot ZIP архивы (legacy)
 │   └── trades/BTCUSDT/         # CSV.gz файлы
 ├── parquet/
-│   └── orderbook/BTCUSDT/      # Parquet файлы (рекомендуется)
+│   └── orderbook/linear/BTCUSDT/  # Parquet файлы (рекомендуется)
 └── klines/
     ├── spot/BTCUSDT/           # Spot свечи
     └── futures/BTCUSDT/        # Futures свечи
@@ -99,7 +109,7 @@ data/
 
 | Тип | Источник | Сырой формат | Parquet | Размер/день |
 |-----|----------|--------------|---------|-------------|
-| Order Book | quote-saver.bycsi.com | ZIP (JSON, 450 МБ) | ZSTD (~65 МБ) | **65-100 МБ** |
+| Order Book | quote-saver.bycsi.com | ZIP (JSON, зависит от рынка/глубины) | ZSTD | **65-200+ МБ** |
 | Trades | public.bybit.com/spot | CSV.gz | — | ~5-50 МБ |
 | Klines | Bybit API v5 | — | ZSTD | ~1-5 МБ |
 
@@ -124,8 +134,9 @@ data/
 
 ## ⚠️ Важные замечания
 
-- **Используй Streaming для Order Book**: `download_orderbook_stream.py` — экономит ~22% места.
-- **Внимание к размерам**: Order Book данные большие! ~65-100 МБ/день = **~24-36 ГБ/год** на символ.
+- **Используй Streaming для Order Book**: `download_orderbook_stream.py` экономит место.
+- **Рынок по умолчанию — derivatives**: `linear` скачивает USDT perpetuals со страницы исторических данных Bybit derivatives. Используй `--market spot`, только если нужны spot архивы.
+- **Внимание к размерам**: Order Book данные большие! Derivatives `ob500` архивы больше, чем spot `ob200`.
 - **Проверяй здоровье диска**: Установи `smartmontools` и запускай `sudo smartctl -a /dev/sdX`.
 
 ## 🔧 Проверка здоровья диска (Linux)

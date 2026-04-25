@@ -12,7 +12,14 @@ import requests
 from datetime import datetime, timedelta
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Tuple, List
+from typing import Tuple
+
+
+DEFAULT_DEPTH_BY_MARKET = {
+    "spot": 200,
+    "linear": 500,
+    "inverse": 500,
+}
 
 
 def download_file(url: str, filepath: Path, max_retries: int = 3) -> Tuple[bool, str]:
@@ -77,13 +84,33 @@ def daterange(start: datetime, end: datetime):
         current += timedelta(days=1)
 
 
-def download_symbol(symbol: str, start: datetime, end: datetime, 
+def build_orderbook_url(market: str, symbol: str, date: datetime, depth: int) -> tuple[str, str]:
+    """
+    Собираем URL исторического архива Order Book.
+
+    params:
+        market: spot, linear или inverse
+        symbol: Торговая пара
+        date: Дата архива
+        depth: Глубина стакана
+    return:
+        Кортеж (url, filename)
+    """
+    date_str = date.strftime("%Y-%m-%d")
+    filename = f"{date_str}_{symbol}_ob{depth}.data.zip"
+    url = f"https://quote-saver.bycsi.com/orderbook/{market}/{symbol}/{filename}"
+    return url, filename
+
+
+def download_symbol(symbol: str, market: str, depth: int, start: datetime, end: datetime,
                     output_dir: Path, workers: int, dry_run: bool) -> dict:
     """
     Скачиваем Order Book для одного символа.
 
     params:
         symbol: Торговая пара
+        market: Рынок Bybit: spot, linear или inverse
+        depth: Глубина стакана
         start: Начальная дата
         end: Конечная дата
         output_dir: Директория для сохранения
@@ -92,16 +119,14 @@ def download_symbol(symbol: str, start: datetime, end: datetime,
     return:
         Статистика {success, failed, skipped}
     """
-    symbol_dir = output_dir / symbol
+    symbol_dir = output_dir / market / symbol
     symbol_dir.mkdir(parents=True, exist_ok=True)
     
     tasks = []
     skipped = 0
     
     for date in daterange(start, end):
-        date_str = date.strftime("%Y-%m-%d")
-        filename = f"{date_str}_{symbol}_ob200.data.zip"
-        url = f"https://quote-saver.bycsi.com/orderbook/spot/{symbol}/{filename}"
+        url, filename = build_orderbook_url(market, symbol, date, depth)
         filepath = symbol_dir / filename
         
         if dry_run:
@@ -152,19 +177,30 @@ def main() -> None:
         None
     """
     parser = argparse.ArgumentParser(
-        description="Скачиваем Order Book данные Bybit",
+        description="Скачиваем Order Book данные Bybit из исторических архивов",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Примеры:
+  # USDT perpetuals (derivatives, default)
   python download_orderbook.py BTCUSDT --start-date 2025-05-01 --end-date 2025-05-31
-  python download_orderbook.py --symbols BTCUSDT,ETHUSDT,SOLUSDT --start-date 2025-05-01 --end-date 2025-05-31
-  python download_orderbook.py ETHUSDT --start-date 2025-05-01 --end-date 2025-05-07 --workers 10
+  python download_orderbook.py --symbols BTCUSDT,ETHUSDT,SOLUSDT --market linear --start-date 2025-05-01 --end-date 2025-05-31
+
+  # Inverse perpetuals
+  python download_orderbook.py BTCUSD --market inverse --start-date 2025-05-01 --end-date 2025-05-07
+
+  # Spot
+  python download_orderbook.py BTCUSDT --market spot --start-date 2025-05-01 --end-date 2025-05-07
         """
     )
     parser.add_argument("symbol", nargs="?", default=None, 
                         help="Торговая пара (можно использовать --symbols)")
     parser.add_argument("--symbols", type=str, default=None,
                         help="Список пар через запятую: BTCUSDT,ETHUSDT,SOLUSDT")
+    parser.add_argument("--market", type=str, choices=["linear", "inverse", "spot"],
+                        default="linear",
+                        help="Рынок Bybit: linear/inverse (derivatives) или spot")
+    parser.add_argument("--depth", type=int, default=None,
+                        help="Глубина стакана. По умолчанию: 500 для derivatives, 200 для spot")
     parser.add_argument("--start-date", type=str, required=True,
                         help="Начальная дата (YYYY-MM-DD)")
     parser.add_argument("--end-date", type=str, required=True,
@@ -186,6 +222,7 @@ def main() -> None:
     else:
         symbols = ["BTCUSDT"]
     
+    depth = args.depth or DEFAULT_DEPTH_BY_MARKET[args.market]
     output_dir = Path(args.output_dir)
     start = datetime.strptime(args.start_date, "%Y-%m-%d")
     end = datetime.strptime(args.end_date, "%Y-%m-%d")
@@ -193,6 +230,8 @@ def main() -> None:
     
     print(f"Bybit Order Book Downloader")
     print(f"Symbols: {', '.join(symbols)}")
+    print(f"Market: {args.market}")
+    print(f"Depth: ob{depth}")
     print(f"Period: {args.start_date} to {args.end_date} ({total_days} days)")
     print(f"Output: {output_dir}")
     print("=" * 50)
@@ -203,7 +242,7 @@ def main() -> None:
         print(f"\n[{i}/{len(symbols)}] {symbol}")
         print("-" * 30)
         
-        stats = download_symbol(symbol, start, end, output_dir, args.workers, args.dry_run)
+        stats = download_symbol(symbol, args.market, depth, start, end, output_dir, args.workers, args.dry_run)
         
         total_stats['success'] += stats['success']
         total_stats['failed'] += stats['failed']
