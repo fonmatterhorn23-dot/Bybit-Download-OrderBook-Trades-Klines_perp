@@ -378,7 +378,7 @@ def validate_existing_output(task: DownloadTask) -> tuple[bool, str]:
         return False, "zero_rows"
     if manifest.get("records") != parquet_rows:
         return False, "row_count_mismatch"
-    if manifest.get("parse_errors", 0) != 0:
+    if manifest.get("parse_errors", 0) != 0 and not manifest.get("allow_parse_errors", False):
         return False, "parse_errors_present"
 
     return True, "ok"
@@ -582,6 +582,7 @@ def process_task(
                 "records": convert_stats.records,
                 "parquet_rows": convert_stats.parquet_rows,
                 "parse_errors": convert_stats.parse_errors,
+                "allow_parse_errors": allow_parse_errors,
                 "compression": "zstd",
                 "compression_level": compression_level,
                 "batch_size": batch_size,
