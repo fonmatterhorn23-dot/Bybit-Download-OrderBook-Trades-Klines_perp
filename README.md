@@ -42,8 +42,8 @@ python scripts/download_orderbook_stream.py BTCUSDT --start-date 2025-05-01 --en
 # Multiple derivatives symbols
 python scripts/download_orderbook_stream.py --symbols BTCUSDT,ETHUSDT,SOLUSDT --market linear --start-date 2025-05-01 --end-date 2025-05-31 --workers 3
 
-# Many symbols from a file (up to 30)
-python scripts/download_orderbook_stream.py --symbols-file pairs.txt --market linear --start-date 2025-05-01 --end-date 2025-05-31 --workers 3
+# Many symbols from a file (up to 30, global queue across all symbol/date tasks)
+python scripts/download_orderbook_stream.py --symbols-file pairs.txt --market linear --start-date 2025-05-01 --end-date 2025-05-31 --workers 5
 
 # Inverse perpetuals
 python scripts/download_orderbook_stream.py BTCUSD --market inverse --start-date 2025-05-01 --end-date 2025-05-31 --workers 3
@@ -53,15 +53,26 @@ python scripts/download_orderbook_stream.py BTCUSDT --market spot --start-date 2
 
 # With disk space threshold (stop if < 100 GB free)
 python scripts/download_orderbook_stream.py BTCUSDT --start-date 2025-05-01 --end-date 2025-12-31 --min-disk 100
+
+# Faster backfills: lower ZSTD level and larger network chunks
+python scripts/download_orderbook_stream.py --symbols-file pairs.txt --market linear --start-date 2025-05-01 --end-date 2025-05-31 --workers 5 --compression-level 3 --chunk-size-mb 4
 ```
 
 **Flags:**
-- `--workers N` — parallel downloads (recommended: 3-5, more may cause timeouts)
+- `--workers N` — global parallel downloads across all symbol/date tasks (recommended: 3-5, more may cause timeouts)
 - `--stagger N` — random delay 0-N seconds before each worker starts (prevents connection flood)
 - `--min-disk N` — stop if disk space drops below N GB
 - `--market linear|inverse|spot` — market archive to download (`linear` by default for USDT perpetuals)
 - `--depth N` — order book depth (`500` for derivatives, `200` for spot by default)
 - `--symbols-file PATH` — read up to 30 symbols from a text file, one per line or comma/space separated; `#` comments are ignored
+- `--batch-size N` — Parquet row group batch size (`50000` by default)
+- `--compression-level N` — ZSTD level for Parquet (`6` by default; use `3` for faster backfills, higher for smaller files)
+- `--chunk-size-mb N` — HTTP download chunk size in MB (`1` by default)
+- `--max-retries N` — retry attempts per symbol/date task (`3` by default)
+- `--allow-parse-errors` — keep writing if individual JSON rows fail to parse (default is fail-fast)
+- `--no-verify-existing` — skip existing Parquet files without validating their manifest and row count
+
+The streaming downloader writes Parquet outputs atomically and creates a `.manifest.json` next to each file. On resume, existing files are skipped only when the manifest, file size, row count, symbol, market, date, depth, and URL match.
 
 ### Order Book (Legacy — ZIP only)
 Download raw ZIP archives without conversion.
