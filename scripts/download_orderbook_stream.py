@@ -29,8 +29,8 @@ from urllib3.util.retry import Retry
 
 DEFAULT_DEPTH_BY_MARKET = {
     "spot": 200,
-    "linear": 500,
-    "inverse": 500,
+    "linear": 200,
+    "inverse": 200,
 }
 MAX_SYMBOLS = 30
 DEFAULT_BATCH_SIZE = 50_000
