@@ -12,6 +12,11 @@ __pycache__/
 *$py.class
 *.so
 
+*.csv
+*.csv.gz
+*.parquet
+*.manifest.json
+
 # IDE
 .idea/
 .vscode/

@@ -12,7 +12,7 @@ import requests
 from datetime import datetime, timedelta
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Tuple, List
+from typing import Tuple, List, Optional
 
 
 def download_file(url: str, filepath: Path, max_retries: int = 3) -> Tuple[bool, str]:
@@ -61,6 +61,64 @@ def download_file(url: str, filepath: Path, max_retries: int = 3) -> Tuple[bool,
     return False, "failed"
 
 
+def parse_symbols_file(symbols_file: str) -> List[str]:
+    """
+    Читаем список торговых пар из файла.
+    Поддерживает: одна пара в строке, через запятую, комментарии (#).
+
+    params:
+        symbols_file: Путь к файлу
+    return:
+        Список символов
+    """
+    symbols: List[str] = []
+    text = Path(symbols_file).read_text(encoding="utf-8")
+    for raw_line in text.splitlines():
+        line = raw_line.split("#", 1)[0].strip()
+        if not line:
+            continue
+        symbols.extend(
+            part.strip().upper()
+            for part in line.replace(",", " ").split()
+            if part.strip()
+        )
+    return symbols
+
+
+def resolve_symbols(
+    symbol: Optional[str],
+    symbols_arg: Optional[str],
+    symbols_file: Optional[str],
+) -> List[str]:
+    """
+    Собираем уникальный список символов из всех источников.
+    Приоритет: --symbols-file → --symbols → позиционный symbol → BTCUSDT.
+
+    params:
+        symbol:       Позиционный аргумент (одна пара)
+        symbols_arg:  --symbols (через запятую)
+        symbols_file: --symbols-file (путь к файлу)
+    return:
+        Уникальный список символов
+    """
+    candidates: List[str] = []
+    if symbols_file:
+        candidates.extend(parse_symbols_file(symbols_file))
+    if symbols_arg:
+        candidates.extend(p.strip().upper() for p in symbols_arg.split(",") if p.strip())
+    if symbol:
+        candidates.append(symbol.upper())
+    if not candidates:
+        candidates.append("BTCUSDT")
+    seen: set = set()
+    result: List[str] = []
+    for c in candidates:
+        if c and c not in seen:
+            result.append(c)
+            seen.add(c)
+    return result
+
+
 def daterange(start: datetime, end: datetime):
     """
     Генерируем даты от start до end включительно.
@@ -101,7 +159,7 @@ def download_symbol(symbol: str, start: datetime, end: datetime,
     for date in daterange(start, end):
         date_str = date.strftime("%Y-%m-%d")
         filename = f"{symbol}_{date_str}.csv.gz"
-        url = f"https://public.bybit.com/spot/{symbol}/{filename}"
+        url = f"https://public.bybit.com/trading/{symbol}/{symbol}{date_str}.csv.gz"
         filepath = symbol_dir / filename
         
         if dry_run:
@@ -162,9 +220,11 @@ def main() -> None:
         """
     )
     parser.add_argument("symbol", nargs="?", default=None,
-                        help="Торговая пара (можно использовать --symbols)")
+                        help="Торговая пара (можно использовать --symbols или --symbols-file)")
     parser.add_argument("--symbols", type=str, default=None,
                         help="Список пар через запятую: BTCUSDT,ETHUSDT,SOLUSDT")
+    parser.add_argument("--symbols-file", type=str, default=None,
+                        help="Файл со списком пар (одна в строке или через запятую, комментарии #)")
     parser.add_argument("--start-date", type=str, required=True,
                         help="Начальная дата (YYYY-MM-DD)")
     parser.add_argument("--end-date", type=str, required=True,
@@ -175,16 +235,13 @@ def main() -> None:
                         help="Количество параллельных загрузок")
     parser.add_argument("--dry-run", action="store_true",
                         help="Показать URL без скачивания")
-    
+
     args = parser.parse_args()
-    
-    # Определяем список символов
-    if args.symbols:
-        symbols = [s.strip().upper() for s in args.symbols.split(',')]
-    elif args.symbol:
-        symbols = [args.symbol.upper()]
-    else:
-        symbols = ["BTCUSDT"]
+
+    try:
+        symbols = resolve_symbols(args.symbol, args.symbols, args.symbols_file)
+    except (OSError, ValueError) as exc:
+        parser.error(str(exc))
     
     output_dir = Path(args.output_dir)
     start = datetime.strptime(args.start_date, "%Y-%m-%d")
